@@ -1,0 +1,210 @@
+proc ULEB128 {} {
+    set result 0;
+    set shift 0;
+    # Reading in ULEB128 argument into result
+    while {1} {
+        set byte [hex 1];
+        set result [expr $result | (($byte & 0x7f) << $shift)]
+        if {[expr $byte & 0x80] == 0x0} {
+            return "0x[format %x $result]";
+        }
+        incr shift 7;
+    }
+    #entry "(result)" [format %x $result];
+}
+
+proc STRING {} {
+    set char [ascii 1];
+    set str $char;
+    while {![string equal $char ""]} {
+        set char [ascii 1];
+        append str $char;
+    }
+    return $str;
+}
+
+proc ParseRebaseInstruction {instruction} {
+    set rebase_opcode_mask 0xf0;
+    set rebase_immediate_mask 0x0f;
+    set opcode [expr $instruction & $rebase_opcode_mask];
+    set immediate [expr $instruction & $rebase_immediate_mask];
+    move -1;
+    section {Instruction} {
+        #REBASE_OPCODE_SET_TYPE_IMM
+        if {$opcode == 0x10} {
+            hex 1 "SET_TYPE_IMM" 
+            entry "Immediate" $immediate 1 [expr [pos] - 1];
+        #REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
+        } elseif {$opcode == 0x20} {
+            hex 1 "SET_SEGMENT_AND_OFFSET_ULEB"
+            entry "Segment" $immediate 1 [expr [pos] - 1];
+
+            set fieldStart [pos];
+            set offset [ULEB128]
+            set fieldEnd [pos];
+            entry "Offset" $offset [expr $fieldEnd - $fieldStart] $fieldStart; 
+        #REBASE_OPCODE_DO_REBASE_IMM_TIMES
+        } elseif {$opcode == 0x50} {
+            hex 1 "DO_REBASE_IMM_TIMES"
+            entry "Immediate" $immediate 1 [expr [pos] - 1];
+        } elseif {$opcode == 0x00} {
+            hex 1 "DONE"
+        } else {
+            hex 1 "Instruction not recognize";
+        }
+    }
+}
+
+proc ParseBindInstruction {instruction} {
+    set bind_opcode_mask 0xf0;
+    set bind_immediate_mask 0x0f;
+    set opcode [expr $instruction & $bind_opcode_mask];
+    set immediate [expr $instruction & $bind_immediate_mask];
+
+    move -1;
+    section {Instruction} {
+        #BIND_OPCODE_SET_DYLIB_ORDINAL_IMM
+        if {$opcode == 0x10} {
+            hex 1 "SET_DYLIB_ORDINAL_IMM"
+            entry "Immediate" $immediate 1 [expr [pos] - 1]
+        #BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM
+        } elseif {$opcode == 0x40} {
+            hex 1 "SET_SYMBOL_TRAILING_FLAGS_IMM"
+
+            set fieldStart [pos];
+            set str [STRING];
+            set fieldEnd [pos];
+
+            entry "String" $str [expr $fieldEnd - $fieldStart] $fieldStart;
+        #BIND_OPCODE_SET_TYPE_IMM
+        }  elseif {$opcode == 0x50} {
+            hex 1 "SET_TYPE_IMM"
+            entry "Immediate" $immediate 1 [expr [pos] - 1];
+        #BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
+        } elseif {$opcode == 0x70} {
+            hex 1 "SET_SEGMENT_AND_OFFSET_ULEB"
+            entry "Segment" $immediate 1 [expr [pos] - 1];
+
+            set fieldStart [pos];
+            set offset [ULEB128];
+            set fieldEnd [pos];
+            entry "Offset" $offset [expr $fieldEnd - $fieldStart] $fieldStart;
+        #BIND_OPCODE_ADD_ADDR_ULEB
+        } elseif {$opcode == 0x80} {
+            hex 1 "ADD_ADDR_ULEB"
+
+            set fieldStart [pos];
+            set addr [ULEB128];
+            set fieldEnd [pos];
+            entry "Address" $addr [expr $fieldEnd - $fieldStart] $fieldStart;
+
+        #BIND_OPCODE_DO_BIND
+        } elseif {$opcode == 0x90} {
+            hex 1 "DO_BIND";
+        } elseif {$opcode == 0x00} {
+            hex 1 "DONE";
+        } else {
+            hex 1 "Instruction not recognized";
+        }
+    }
+}
+
+set rebase_off [uint32]
+move -4;
+uint32 -hex "rebase_off";
+
+set rebase_size [uint32]
+move -4;
+uint32 "rebase_size";
+
+set bind_off [uint32];
+move -4;
+uint32 -hex "bind_off";
+
+set bind_size [uint32];
+move -4;
+uint32 "bind_size";
+
+set weak_bind_off [uint32];
+move -4;
+uint32 -hex "weak_bind_off";
+
+set weak_bind_size [uint32];
+move -4;
+uint32 "weak_bind_size";
+
+set lazy_bind_off [uint32];
+move -4;
+uint32 -hex "lazy_bind_off";
+
+set lazy_bind_size [uint32];
+move -4;
+uint32 "lazy_bind_size";
+
+set export_off [uint32];
+move -4;
+uint32 -hex "export_off";
+
+set export_size [uint32];
+move -4;
+uint32 "export size";
+
+set currentPos [pos];
+if {$rebase_size > 0} {
+    goto $rebase_off;
+    section "Rebase Info" {
+        set instruction [hex 1];
+        while {$instruction != 0x00} {
+            ParseRebaseInstruction $instruction
+            set instruction [hex 1];
+        }
+        entry "DONE" "";
+
+        goto $rebase_off;
+        hex $rebase_size "body";
+    }
+}
+
+if {$bind_size > 0} {
+    goto $bind_off;
+    section "Bind Info" {
+        set instruction [hex 1];
+        while {$instruction != 0x00} {
+            ParseBindInstruction $instruction;
+            set instruction [hex 1];
+        }
+        entry "DONE" "";
+
+        goto $bind_off;
+        hex $bind_size "body";
+    }
+}
+
+if {$weak_bind_size > 0} {
+    goto $weak_bind_off;
+    section "Weak Bind Info" {
+        hex $weak_bind_size "body";
+    }
+}
+
+if {$lazy_bind_size > 0} {
+    goto $lazy_bind_off;
+    section "Lazy Bind Info" {
+        set instruction [hex 1]
+        while {[pos] < [expr $lazy_bind_off + $lazy_bind_size]} {
+           ParseBindInstruction $instruction; 
+           set instruction [hex 1];
+        }
+        entry "DONE" "";
+        goto $lazy_bind_off
+        hex $lazy_bind_size "body";
+    }
+}
+
+if {$export_size > 0} {
+    goto $export_off;
+    section "Export Info" {
+        hex $export_size "body";
+    }
+}
+goto $currentPos;
