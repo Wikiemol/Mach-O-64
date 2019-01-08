@@ -18,10 +18,8 @@ section "Header" {
     uint32 "sizeofcmds";
     uint32 -hex "flags";
 
-    #The mach-o header only has the reserved field when 
-    #we are in a 64 bit mach-o file
     if {$magic == 0xFEEDFACF} {
-        uint32 "reserved for future use by spec";
+        uint32 "reserved";
     }
 }
 
